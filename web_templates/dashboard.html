@@ -1367,6 +1367,40 @@ body:not(.theme-x3-dark) .panel-toggle-slider{background:#d9d3cc;border-color:rg
 body.theme-x3-light .panel-toggle input:checked + .panel-toggle-slider,
 body:not(.theme-x3-dark) .panel-toggle input:checked + .panel-toggle-slider{background:linear-gradient(135deg,#8a7a6a,#6a5c4e);border-color:rgba(60,50,40,.35);}
 @media (max-width:640px){body.theme-x3-light .card,body:not(.theme-x3-dark) .card,body.theme-x3-light .page-card,body:not(.theme-x3-dark) .page-card{box-shadow:0 12px 26px rgba(60,50,40,.07),inset 0 1px 0 rgba(255,255,255,.86) !important;}}
+
+/* === one-shot price monitor box === */
+.params-form .price-monitor-card{
+  margin:18px 0 4px;
+  padding:16px 16px 14px;
+  border-radius:18px;
+  border:1px solid rgba(94,214,190,.20);
+  background:linear-gradient(135deg, rgba(35,94,104,.24), rgba(42,68,100,.18));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.08);
+}
+.params-form .price-monitor-card .subsection-title{margin:0 0 7px !important;}
+.price-monitor-note{
+  margin:0 0 13px;
+  font-size:12px;
+  line-height:1.65;
+  color:rgba(225,239,247,.66);
+}
+.params-form .price-monitor-grid{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,1fr);
+  gap:12px;
+}
+body.theme-x3-light .params-form .price-monitor-card,
+body:not(.theme-x3-dark) .params-form .price-monitor-card{
+  margin-top:18px !important;
+  padding:16px !important;
+  border:1px solid rgba(72,126,118,.18) !important;
+  border-radius:18px !important;
+  background:linear-gradient(135deg, rgba(230,242,238,.78), rgba(241,238,232,.72)) !important;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.82) !important;
+}
+body.theme-x3-light .price-monitor-note,
+body:not(.theme-x3-dark) .price-monitor-note{color:#687687;}
+@media (max-width:640px){.params-form .price-monitor-grid{grid-template-columns:1fr;}}
 </style>
 <body class="dash-body theme-x3-dark" data-selected="{{ selected }}">
 <script>
@@ -1729,6 +1763,29 @@ body:not(.theme-x3-dark) .panel-toggle input:checked + .panel-toggle-slider{back
                   {% endfor %}
                 </div>
               </div>
+              {% if group['id'] == 'basic' and not is_common %}
+                <div class="config-card price-monitor-card param-group-monitor">
+                  <div class="subsection-title">标的价格监控</div>
+                  <p class="price-monitor-note">默认关闭。开启后从当时实时价开始监控；两个价格任意一个首次被向上/向下穿越或到达即推送一次，推送成功后自动关闭，需要手动重新开启。</p>
+                  <div class="price-monitor-grid">
+                    <div class="field-block readonly-block">
+                      <div class="field-label-row"><label>监控状态</label></div>
+                      <select name="monitor_enabled" disabled data-lock="1">
+                        <option value="off" {% if (section.get('monitor_enabled', 'off')|string|lower) != 'on' %}selected{% endif %}>off</option>
+                        <option value="on" {% if (section.get('monitor_enabled', 'off')|string|lower) == 'on' %}selected{% endif %}>on</option>
+                      </select>
+                    </div>
+                    <div class="field-block readonly-block">
+                      <div class="field-label-row"><label>监控价格 1</label></div>
+                      <input type="text" name="monitor_price_1" value="{{ section.get('monitor_price_1', '') }}" placeholder="例如 442.00" readonly data-lock="1">
+                    </div>
+                    <div class="field-block readonly-block">
+                      <div class="field-label-row"><label>监控价格 2</label></div>
+                      <input type="text" name="monitor_price_2" value="{{ section.get('monitor_price_2', '') }}" placeholder="例如 480.00" readonly data-lock="1">
+                    </div>
+                  </div>
+                </div>
+              {% endif %}
             {% endfor %}
           </section>
         </form>
