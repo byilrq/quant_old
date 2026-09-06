@@ -416,6 +416,81 @@ def _send_ntfy(msg: str, cfg: Dict[str, str]) -> bool:
     return ok
 
 
+
+def build_price_monitor_message(
+    *,
+    name: str,
+    symbol: str,
+    now_str: str,
+    zone: str,
+    current_price: float,
+    monitor_price: float,
+    current_units: float,
+    current_avg_cost: float,
+    base_units: float,
+    target_units: float,
+    limit_units: float,
+    position_mode: str,
+    ma150: float,
+    ma150_source: str,
+    trend_price: float,
+    clear_price: float,
+    box_grid_enabled: bool,
+    grid_box_percent: float,
+    grid_box_units_percent: float,
+    dynamic_k150: float,
+    sideways_score: float,
+    market_source: str,
+    market_status: str,
+    strategy_source: str,
+    strategy_status: str,
+) -> str:
+    """Build the one-shot [moni] price-monitor notification body."""
+
+    def _num(value: Any, digits: int = 3) -> str:
+        try:
+            return f"{float(value):.{digits}f}"
+        except (TypeError, ValueError):
+            return "-"
+
+    def _pct(value: Any, digits: int = 2) -> str:
+        try:
+            number = float(value) * 100.0
+        except (TypeError, ValueError):
+            return "-"
+        text = f"{number:.{digits}f}".rstrip("0").rstrip(".")
+        return f"{text}%"
+
+    if str(position_mode or "").strip().lower() == "percent":
+        position_text = _pct(current_units, 2)
+        base_text = _pct(base_units, 2)
+        target_text = _pct(target_units, 2)
+        limit_text = _pct(limit_units, 2)
+    else:
+        position_text = _num(current_units, 0)
+        base_text = _num(base_units, 0)
+        target_text = _num(target_units, 0)
+        limit_text = _num(limit_units, 0)
+
+    grid_status = "已开启" if bool(box_grid_enabled) else "未开启"
+    source_suffix = str(ma150_source or "").strip()
+    ma_text = _num(ma150, 3)
+    if source_suffix:
+        ma_text += f"({source_suffix})"
+
+    return (
+        f"🟢[moni]【{name}】 ({symbol})\n"
+        f"🕒时间: {now_str}\n"
+        f"🍭区间: {zone}\n"
+        f"💲当前: {_num(current_price, 3)},监控：{_num(monitor_price, 2)}\n"
+        f"⚖️持仓: {position_text}, 成本: {_num(current_avg_cost, 3)}, 底仓: {base_text}, 补仓初始: {target_text}, 极限: {limit_text}\n"
+        f"🔀MA150={ma_text}, Trend={_num(trend_price, 3)}, Clear={_num(clear_price, 3)}\n"
+        f"📦箱体网格: {grid_status}，步长{_pct(grid_box_percent, 2)}，单次{_pct(grid_box_units_percent, 2)}\n"
+        f"⏳动态K={_num(dynamic_k150, 3)}，横盘评分={_num(sideways_score, 2)}\n"
+        f"📡行情源: {market_source}，数据状态: {market_status}。\n"
+        f"🧭策略源: {strategy_source}，数据状态: {strategy_status}。"
+    )
+
 def send_notification(msg: str, title: str = "Quant 推送", config: Dict[str, Any] | None = None) -> bool:
     cfg = _normalize_config(config or load_push_config())
     enabled = str(cfg.get("PUSH_ENABLED", "yes")).strip().lower()

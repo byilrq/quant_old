@@ -17,6 +17,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from push import PUSH_LOG_FILE, send_notification
+from monitor import run_price_monitor
 
 # 导入策略模块
 from strategy import (
@@ -2376,7 +2377,7 @@ def append_strategy_issue_to_reason(reason, strategy_issue, ma150_source=None):
         return f"{reason}（MA150={src}，触发价为估算）"
     return f"{reason}（{issue}）"
 
-def strategy_for_quant(name, cfg, state, allow_trade=True, refresh_reason="", refresh_reference=False):
+def strategy_for_quant(name, cfg, state, allow_trade=True, allow_monitor=True, refresh_reason="", refresh_reference=False):
     symbol = cfg["symbol"]
     position_mode = get_position_mode(cfg)
     base_units = get_base_units(cfg)
@@ -2732,6 +2733,44 @@ def strategy_for_quant(name, cfg, state, allow_trade=True, refresh_reason="", re
     logging.info(status_msg + "\n")
     quant_state["last_status_msg"] = status_msg
     quant_state["status_updated_at"] = strategy_now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # 价格监控与交易策略完全解耦：只消费本轮已校验的实时行情与状态，
+    # 不修改仓位、不调用任何买卖决策；Web 手动刷新由 allow_monitor=False 排除。
+    try:
+        run_price_monitor(
+            name=name,
+            cfg=cfg,
+            quant_state=quant_state,
+            current_price=current_price,
+            config_path=Path(config_path),
+            allow_monitor=allow_monitor,
+            message_context={
+                "now_str": now_str,
+                "zone": zone,
+                "current_units": current_units,
+                "current_avg_cost": current_avg_cost,
+                "base_units": base_units,
+                "target_units": target_units,
+                "limit_units": limit_units,
+                "position_mode": position_mode,
+                "ma150": ma150,
+                "ma150_source": ma150_source,
+                "trend_price": sell_price,
+                "clear_price": clear_price,
+                "box_grid_enabled": get_box_grid_enabled(cfg),
+                "grid_box_percent": _safe_float(cfg.get("grid_box_percent", 0.0), 0.0),
+                "grid_box_units_percent": _safe_float(cfg.get("grid_box_units_percent", 0.0), 0.0),
+                "dynamic_k150": dynamic_k150,
+                "sideways_score": sideways_score,
+                "market_source": _display_source_name(snapshot.source),
+                "market_status": "OK",
+                "strategy_source": strategy_source,
+                "strategy_status": strategy_status,
+            },
+        )
+    except Exception as e:
+        logging.exception(f"{name} 价格监控执行失败: {e}")
+
     units_before_decision = current_units
     avg_cost_before_decision = current_avg_cost
     if not allow_trade:
@@ -3207,6 +3246,7 @@ def main_loop():
                     msgs = strategy_for_quant(
                         _name, _cfg, state,
                         allow_trade=True,
+                        allow_monitor=False,
                         refresh_reason="回滚后按当前价重新执行策略",
                         refresh_reference=True,
                     )
@@ -3289,6 +3329,7 @@ def main_loop():
                 msgs = strategy_for_quant(
                     name, cfg, state,
                     allow_trade=not force_refresh and loop_enabled,
+                    allow_monitor=not force_refresh,
                     refresh_reason="Web手动刷新，仅更新状态",
                     refresh_reference=True,
                 )

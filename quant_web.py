@@ -1576,6 +1576,7 @@ def refresh_status_snapshot_now(selected: str, section: Dict[str, Any]) -> Tuple
             dict(section or {}),
             state,
             allow_trade=False,
+            allow_monitor=False,
             refresh_reason="Web即时刷新，仅更新状态",
             refresh_reference=True,
         )
@@ -2729,6 +2730,10 @@ def build_new_symbol_section(config: Dict[str, Any], symbol: str) -> Dict[str, A
     common["strategy_run"] = "on"
     common["box_grid_enabled"] = "no"
     common["pyramid_add_enabled"] = "auto"
+    common["monitor_enabled"] = "off"
+    common["monitor_price_1"] = ""
+    common["monitor_price_2"] = ""
+    common["monitor_arm_id"] = ""
     common.setdefault("current_units", common.get("base_units", ""))
     common.setdefault("current_avg_cost", 0.0)
     ordered = {"symbol": symbol}
@@ -3167,6 +3172,34 @@ def _save_all_params(config: Dict[str, Any], selected: str) -> None:
         for key, _, _ in group["items"]:
             if key in request.form:
                 section[key] = convert_form_value(key, request.form.get(key, ""))
+
+    # 价格监控使用 dashboard.html 中的独立框体，不加入通用 FIELD_GROUPS。
+    if selected != "COMMON_BACKTEST_CONFIG":
+        old_monitor_enabled = str(section.get("monitor_enabled", "off") or "off").strip().lower()
+        if "monitor_enabled" in request.form:
+            new_monitor_enabled = str(request.form.get("monitor_enabled", "off") or "off").strip().lower()
+            if new_monitor_enabled not in {"on", "off"}:
+                new_monitor_enabled = "off"
+            section["monitor_enabled"] = new_monitor_enabled
+            if new_monitor_enabled == "on" and old_monitor_enabled != "on":
+                # 每次手动重新开启生成新批次，确保关闭期间的价格变化不会被补判为穿越。
+                section["monitor_arm_id"] = secrets.token_hex(8)
+        for monitor_key in ("monitor_price_1", "monitor_price_2"):
+            if monitor_key in request.form:
+                raw_monitor_price = str(request.form.get(monitor_key, "") or "").strip()
+                if not raw_monitor_price:
+                    section[monitor_key] = ""
+                else:
+                    try:
+                        monitor_price = float(raw_monitor_price)
+                    except (TypeError, ValueError):
+                        monitor_price = 0.0
+                    section[monitor_key] = monitor_price if monitor_price > 0 else ""
+        section.setdefault("monitor_enabled", "off")
+        section.setdefault("monitor_price_1", "")
+        section.setdefault("monitor_price_2", "")
+        section.setdefault("monitor_arm_id", "")
+
     # 移除已废弃字段
     section.pop("fee_rate", None)
     section.pop("slippage_bp", None)
