@@ -2272,35 +2272,104 @@ def build_no_trade_reason(zone, cfg, quant_state, state_dict, current_price, ma1
         if zone == "BOX_ZONE":
             chance_trigger = ma150 if ma150 and ma150 > 0 else 0.0
             trend_trigger = ma150 * get_trend_multiple(cfg) if ma150 and ma150 > 0 else 0.0
+
+            # 机会区倒金字塔一旦启动，回到 BOX 只代表价格反弹，低吸周期并未结束。
+            # strategy.py 会继续在 BOX 中按 last_add_price 的步长判断加仓，因此快照必须
+            # 优先展示这条仍在运行的链路，不能再用“箱体区不主动补仓/只等 Trend 卖出”误导。
+            pyramid_active = bool(state_dict.get("pyramid_add_active", False)) or get_pyramid_add_enabled(cfg) == "yes"
+            if pyramid_active:
+                total_steps = get_pyramid_add_steps(cfg)
+                step = min(max(int(state_dict.get("pyramid_step", 0) or 0), 0), total_steps)
+                step_pct = get_pyramid_add_step(cfg)
+                last_add = (
+                    state_dict.get("last_add_price")
+                    or state_dict.get("pyramid_anchor_price")
+                    or chance_trigger
+                    or current_price
+                )
+                try:
+                    last_add = float(last_add)
+                except (TypeError, ValueError):
+                    last_add = float(current_price)
+
+                cycle_end = (
+                    f"；涨到 {price_text(trend_trigger)} 以上进入 TREND_ZONE。"
+                    if trend_trigger > 0 else
+                    "；进入 TREND_ZONE。"
+                )
+
+                if cu >= limit - POSITION_EPSILON:
+                    return (
+                        "BOX_ZONE 未交易：机会倒金字塔加仓周期延续中；"
+                        f"当前持仓 {units(cu)} 已达极限 {units(limit)}，不再加仓；"
+                        f"当前第 {step}/{total_steps} 步，上次加仓价 {price_text(last_add)}"
+                        f"{cycle_end}"
+                    )
+
+                if total_steps <= 0 or step >= total_steps:
+                    return (
+                        "BOX_ZONE 未交易：机会倒金字塔加仓周期延续中；"
+                        f"已完成 {step}/{total_steps} 步，当前持仓 {units(cu)}，极限 {units(limit)}"
+                        f"{cycle_end}"
+                    )
+
+                next_trigger = last_add * (1 - step_pct) if last_add > 0 and step_pct > 0 else 0.0
+                if next_trigger > 0 and current_price > next_trigger + POSITION_EPSILON:
+                    return (
+                        "BOX_ZONE 未交易：机会倒金字塔加仓周期延续中，"
+                        f"当前价 {price_text(current_price)} > 触发价 {price_text(next_trigger)}，"
+                        f"上次加仓价 {price_text(last_add)}，{pct(step_pct)} 步进，"
+                        f"待加仓第 {step + 1}/{total_steps} 步；"
+                        f"当前持仓 {units(cu)}，补仓初始 {units(target)}，极限 {units(limit)}"
+                        f"{cycle_end}"
+                    )
+
+                if next_trigger > 0:
+                    return (
+                        "BOX_ZONE 未交易：机会倒金字塔加仓周期延续中，"
+                        f"当前价 {price_text(current_price)} <= 触发价 {price_text(next_trigger)}，"
+                        f"上次加仓价 {price_text(last_add)}，{pct(step_pct)} 步进，"
+                        f"待判断第 {step + 1}/{total_steps} 步；"
+                        f"当前持仓 {units(cu)}，补仓初始 {units(target)}，极限 {units(limit)}"
+                        f"{cycle_end}"
+                    )
+
+                return (
+                    "BOX_ZONE 未交易：机会倒金字塔加仓周期延续中；"
+                    f"当前第 {step}/{total_steps} 步，上次加仓价 {price_text(last_add)}；"
+                    f"当前持仓 {units(cu)}，补仓初始 {units(target)}，极限 {units(limit)}"
+                    f"{cycle_end}"
+                )
+
             if cu < target - POSITION_EPSILON:
                 if chance_trigger > 0:
                     return (
-                        "BOX_ZONE 未交易：箱体区不主动补仓；"
-                        f"当前持仓 {units(cu)} < 目标 {units(target)}，"
-                        f"需跌破 MA150 {price_text(chance_trigger)} 进入 CHANCE_ZONE 后才判断买入。"
+                        "BOX_ZONE 未交易：机会倒金字塔尚未启动；"
+                        f"当前持仓 {units(cu)} < 补仓初始仓位 {units(target)}，"
+                        f"需跌破 MA150 {price_text(chance_trigger)} 进入 CHANCE_ZONE 后启动本轮低吸。"
                     )
                 return (
-                    "BOX_ZONE 未交易：箱体区不主动补仓；"
-                    f"当前持仓 {units(cu)} < 目标 {units(target)}，需进入 CHANCE_ZONE 后才判断买入。"
+                    "BOX_ZONE 未交易：机会倒金字塔尚未启动；"
+                    f"当前持仓 {units(cu)} < 补仓初始仓位 {units(target)}，需进入 CHANCE_ZONE 后启动本轮低吸。"
                 )
             if cu > target + POSITION_EPSILON:
                 if trend_trigger > 0:
                     return (
-                        "BOX_ZONE 未交易：箱体区不主动卖出；"
-                        f"当前持仓 {units(cu)} > 目标 {units(target)}，"
+                        "BOX_ZONE 未交易：当前没有延续中的机会倒金字塔加仓周期；"
+                        f"当前持仓 {units(cu)} > 补仓初始仓位 {units(target)}，"
                         f"需涨到 {price_text(trend_trigger)} 或以上进入 TREND_ZONE 后才判断卖出。"
                     )
                 return (
-                    "BOX_ZONE 未交易：箱体区不主动卖出；"
-                    f"当前持仓 {units(cu)} > 目标 {units(target)}，需进入 TREND_ZONE 后才判断卖出。"
+                    "BOX_ZONE 未交易：当前没有延续中的机会倒金字塔加仓周期；"
+                    f"当前持仓 {units(cu)} > 补仓初始仓位 {units(target)}，需进入 TREND_ZONE 后才判断卖出。"
                 )
             if chance_trigger > 0 and trend_trigger > 0:
                 return (
-                    "BOX_ZONE 未交易：箱体区不主动买卖，"
-                    f"向下跌破 MA150 {price_text(chance_trigger)} 才看买入，"
-                    f"向上涨到 {price_text(trend_trigger)} 才看卖出。"
+                    "BOX_ZONE 未交易：机会倒金字塔尚未启动，"
+                    f"向下跌破 MA150 {price_text(chance_trigger)} 后启动低吸周期；"
+                    f"向上涨到 {price_text(trend_trigger)} 后进入 TREND_ZONE 判断卖出。"
                 )
-            return "BOX_ZONE 未交易：箱体区不主动买卖，等待进入 CHANCE_ZONE 或 TREND_ZONE。"
+            return "BOX_ZONE 未交易：机会倒金字塔尚未启动，等待进入 CHANCE_ZONE 或 TREND_ZONE。"
 
         if zone == "TREND_ZONE":
             step_pct = get_trend_zone_step_percent(cfg)
@@ -2681,6 +2750,37 @@ def strategy_for_quant(name, cfg, state, allow_trade=True, allow_monitor=True, r
                 lines.append(f"📦箱体网格: {grid_status}，步长{_pct_text(grid_step)}，单次{_pct_text(grid_units)}")
             else:
                 lines.append(f"📦箱体网格: {grid_status}")
+
+            # BOX 只是不启动新的机会倒金字塔周期；如果此前 CHANCE 已激活，
+            # strategy.py 会在 BOX 中继续按 last_add_price 步进，因此状态正文同步展示。
+            pyramid_active = bool(quant_state.get("pyramid_add_active", False)) or get_pyramid_add_enabled(cfg) == "yes"
+            if pyramid_active:
+                cur_step = min(max(int(quant_state.get("pyramid_step", 0) or 0), 0), total_add_pyramid_steps)
+                step_pct = get_pyramid_add_step(cfg)
+                last_add = (
+                    quant_state.get("last_add_price")
+                    or quant_state.get("pyramid_anchor_price")
+                    or ma150
+                    or current_price
+                )
+                next_step = cur_step + 1
+                if current_units >= limit_units - POSITION_EPSILON:
+                    lines.append(
+                        f"🧱机会倒金字塔: BOX延续中，加仓{cur_step}/{total_add_pyramid_steps}步，"
+                        f"已达极限{format_units_for_display(limit_units, position_mode)}，回到BOX不重置"
+                    )
+                elif cur_step >= total_add_pyramid_steps or total_add_pyramid_steps <= 0:
+                    lines.append(
+                        f"🧱机会倒金字塔: BOX延续中，加仓{cur_step}/{total_add_pyramid_steps}步，"
+                        "剩余加仓档位已用完，回到BOX不重置"
+                    )
+                else:
+                    next_trigger = _safe_float(last_add, 0.0) * (1 - step_pct)
+                    lines.append(
+                        f"🧱机会倒金字塔: BOX延续中，加仓{cur_step}/{total_add_pyramid_steps}步，"
+                        f"上次{_safe_float(last_add, current_price):.3f}，下一步{next_trigger:.3f}"
+                        f"（第{next_step}/{total_add_pyramid_steps}步，步长{_pct_text(step_pct)}）"
+                    )
         elif zone == "CHANCE_ZONE":
             pyramid_mode = get_pyramid_add_enabled(cfg)
             if pyramid_mode == "yes":
