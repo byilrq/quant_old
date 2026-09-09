@@ -469,7 +469,7 @@ def save_full_config(full_cfg, path=None):
         yaml.dump(full_cfg, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
     return True
 
-def persist_runtime_position_to_config(name, current_units, avg_cost):
+def persist_runtime_position_to_config(name, current_units, avg_cost, cfg_updates=None):
     global FULL_CONFIG, SYMBOL_CONFIG
     try:
         _, _, disk_cfg = load_config(config_path)
@@ -485,8 +485,21 @@ def persist_runtime_position_to_config(name, current_units, avg_cost):
     mode = get_position_mode(symbol_cfg[name])
     symbol_cfg[name]["current_units"] = format_units_for_display(current_units, mode) if mode == "percent" else int(round(_safe_float(current_units, 0.0)))
     symbol_cfg[name]["current_avg_cost"] = round(_safe_float(avg_cost, 0.0), 6) if _safe_float(avg_cost, 0.0) > 0 else 0.0
+
+    # 同步策略运行时产生的配置更新。尤其是机会倒金字塔在 CHANCE 启动时写 yes，
+    # 进入 TREND/CLEAR 结束本轮低吸周期时必须真正落盘为 auto。否则主循环下一轮
+    # 重新读取 quant.yaml 后会把旧 yes 带回来，造成 TREND -> BOX 时旧周期复活。
+    if isinstance(cfg_updates, dict):
+        for key in ("pyramid_add_enabled",):
+            if key in cfg_updates and cfg_updates.get(key) in {"yes", "auto"}:
+                symbol_cfg[name][key] = cfg_updates[key]
+
     SYMBOL_CONFIG[name]["current_units"] = symbol_cfg[name]["current_units"]
     SYMBOL_CONFIG[name]["current_avg_cost"] = symbol_cfg[name]["current_avg_cost"]
+    if isinstance(cfg_updates, dict):
+        for key in ("pyramid_add_enabled",):
+            if key in cfg_updates and key in symbol_cfg[name]:
+                SYMBOL_CONFIG[name][key] = symbol_cfg[name][key]
     FULL_CONFIG = disk_cfg
     return save_full_config(disk_cfg)
 
@@ -2273,10 +2286,10 @@ def build_no_trade_reason(zone, cfg, quant_state, state_dict, current_price, ma1
             chance_trigger = ma150 if ma150 and ma150 > 0 else 0.0
             trend_trigger = ma150 * get_trend_multiple(cfg) if ma150 and ma150 > 0 else 0.0
 
-            # 机会区倒金字塔一旦启动，回到 BOX 只代表价格反弹，低吸周期并未结束。
-            # strategy.py 会继续在 BOX 中按 last_add_price 的步长判断加仓，因此快照必须
-            # 优先展示这条仍在运行的链路，不能再用“箱体区不主动补仓/只等 Trend 卖出”误导。
-            pyramid_active = bool(state_dict.get("pyramid_add_active", False)) or get_pyramid_add_enabled(cfg) == "yes"
+            # BOX 只延续已经由 CHANCE 激活的运行时低吸周期。
+            # 配置中的 yes 不能单独让 BOX 复活周期；TREND/CLEAR 一旦重置，
+            # 必须等下一次真正进入 CHANCE_ZONE 才能开启新一轮倒金字塔。
+            pyramid_active = bool(state_dict.get("pyramid_add_active", False))
             if pyramid_active:
                 total_steps = get_pyramid_add_steps(cfg)
                 step = min(max(int(state_dict.get("pyramid_step", 0) or 0), 0), total_steps)
@@ -2751,9 +2764,9 @@ def strategy_for_quant(name, cfg, state, allow_trade=True, allow_monitor=True, r
             else:
                 lines.append(f"📦箱体网格: {grid_status}")
 
-            # BOX 只是不启动新的机会倒金字塔周期；如果此前 CHANCE 已激活，
-            # strategy.py 会在 BOX 中继续按 last_add_price 步进，因此状态正文同步展示。
-            pyramid_active = bool(quant_state.get("pyramid_add_active", False)) or get_pyramid_add_enabled(cfg) == "yes"
+            # BOX 只展示并延续已经由 CHANCE 激活的 runtime 周期。
+            # 若 TREND/CLEAR 已把 runtime 状态重置，则 BOX 不得因配置 yes 显示为延续中。
+            pyramid_active = bool(quant_state.get("pyramid_add_active", False))
             if pyramid_active:
                 cur_step = min(max(int(quant_state.get("pyramid_step", 0) or 0), 0), total_add_pyramid_steps)
                 step_pct = get_pyramid_add_step(cfg)
@@ -2936,7 +2949,7 @@ def strategy_for_quant(name, cfg, state, allow_trade=True, allow_monitor=True, r
     )
     if cfg_updates.get("pyramid_add_enabled") in {"yes", "auto"} and cfg.get("pyramid_add_enabled") != cfg_updates.get("pyramid_add_enabled"):
         cfg["pyramid_add_enabled"] = cfg_updates["pyramid_add_enabled"]
-        persist_runtime_position_to_config(name, current_units, current_avg_cost)
+        persist_runtime_position_to_config(name, current_units, current_avg_cost, cfg_updates)
     for _evt in add_events:
         if _evt == "PYRAMID_AUTO_TRIGGERED":
             logging.info(f"[{now_str}] 倒金字塔加仓已激活（价格跌破MA150）")
